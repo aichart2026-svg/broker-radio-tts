@@ -1,0 +1,191 @@
+{
+  "name": "Radio",
+  "description": null,
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/audio/speech",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "REPLACE_ME"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "tts-1"
+            },
+            {
+              "name": "voice",
+              "value": "shimmer"
+            },
+            {
+              "name": "input",
+              "value": "=={{$json.choices[0].message.content}}"
+            },
+            {
+              "name": "response_format",
+              "value": "mp3"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        96,
+        -512
+      ],
+      "id": "1c5a9070-c631-4c5a-8f87-8a466456f2b2",
+      "name": "server"
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "options": {},
+        "files": {
+          "values": [
+            {}
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        576,
+        -496
+      ],
+      "id": "711a85dd-4365-4a0d-9ce1-e93769849681",
+      "name": "Discord",
+      "credentials": {
+        "discordWebhookApi": {
+          "name": "YOUR_CREDENTIAL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nreturn items.map(item => {\n  return {\n    json: item.json,\n    binary: {\n      data: {\n        ...item.binary.data,\n        fileName: 'news.mp3',\n        fileExtension: 'mp3',\n      }\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        336,
+        -496
+      ],
+      "id": "97c23446-e46e-4958-b4ad-6d903448b473",
+      "name": "rename"
+    },
+    {
+      "parameters": {
+        "jsCode": "// === RSS-ленты разделены на категории ===\nconst internationalFeeds = [\n  'https://www.finam.ru/international/advanced/rsspoint/',\n  'https://www.coindesk.com/arc/outboundfeeds/rss/',\n  'https://www.investing.com/rss/news_25.rss',\n  'https://www.investing.com/rss/news_14.rss',\n  'https://www.investing.com/rss/news_1.rss',\n];\n\nconst russiaFeeds = [\n  // Финам — аналитика рынков и компаний (чисто финансовые)\n  'https://www.finam.ru/analysis/marketnews/rsspoint/',\n  'https://www.finam.ru/analysis/conews/rsspoint/',\n  'https://www.finam.ru/analysis/forecasts/rsspoint/',\n  // РБК — только раздел Финансы (ID=5) и Инвестиции\n  'https://rssexport.rbc.ru/rbcnews/news/5/full.rss',\n  // SmartLab — трейдерский контент\n  'https://smart-lab.ru/rss/flow/',\n  // БКС Экспресс — брокерская аналитика\n  'https://bcs-express.ru/rss',\n];\n\nconst allTitles = [];\nconst seenNormalized = new Set();\n\n// Нормализация для дедупликации\nfunction normalize(title) {\n  return title.toLowerCase().replace(/[^a-zа-яё0-9\\s]/gi, '').replace(/\\s+/g, ' ').trim();\n}\n\n// Извлечение ключевых слов (убираем стоп-слова)\nconst ruStopWords = new Set(['и','в','на','по','за','из','от','до','для','что','как','это','при','его','она','они','все','уже','или','так','но','не','с','к','о','а','у','со','ко','бы','же','ли','то','да','нет','был','была','были','будет','может','более','между','после','перед','через','также','который','которая','которое','которые','этот','эта','эти','свой','свои','около','против','вместе','кроме','только','очень','этого','этой','этих','того','тому','всех','всей','одна','одно','одни','другие','каждый','любой','много','мало','пока','если']);\n\nfunction getKeywords(normalized) {\n  return normalized.split(' ').filter(w => w.length > 2 && !ruStopWords.has(w));\n}\n\n// Проверка похожести — строгая дедупликация\nfunction isSimilar(normA, normB) {\n  if (normA === normB) return true;\n  if (normA.includes(normB) || normB.includes(normA)) return true;\n  \n  const kwA = getKeywords(normA);\n  const kwB = getKeywords(normB);\n  if (kwA.length === 0 || kwB.length === 0) return false;\n  \n  const setB = new Set(kwB);\n  const common = kwA.filter(w => setB.has(w)).length;\n  \n  const ratioA = common / kwA.length;\n  const ratioB = common / kwB.length;\n  if (ratioA > 0.35 || ratioB > 0.35) return true;\n  \n  const longA = kwA.filter(w => w.length > 4);\n  const longB = new Set(kwB.filter(w => w.length > 4));\n  if (longA.length > 0 && longB.size > 0) {\n    const longCommon = longA.filter(w => longB.has(w)).length;\n    if (longCommon >= 1) return true;\n  }\n  \n  return false;\n}\n\n// Список слов-стоп для фильтрации служебных заголовков фида\nconst stopWords = [\n  'finam.ru', 'investing.com', 'coindesk', 'рбк', 'rbc.ru',\n  'smartlab', 'smart-lab', 'bcs express', 'бкс экспресс',\n  'интерфакс', 'interfax', 'новости и аналитика',\n  'новости дня', 'все новости', 'лента новостей',\n];\n\nfunction isServiceTitle(title) {\n  const low = title.toLowerCase();\n  return stopWords.some(sw => low.includes(sw)) || title.length < 12;\n}\n\n// Фильтр политических новостей — пропускаем только финансы/рынки\nconst politicalWords = [\n  'путин', 'зеленск', 'байден', 'трамп', 'навальн', 'лавров', 'шойгу',\n  'песков', 'мишустин', 'депутат', 'госдума', 'дума', 'парламент',\n  'кремль', 'белый дом', 'пентагон', 'нато', 'nato', 'оон',\n  'мид ', 'минобороны', 'генштаб', 'военн', 'армия', 'войск',\n  'ракет', 'удар', 'обстрел', 'фронт', 'наступлен', 'оборон',\n  'сво ', 'мобилизац', 'призыв', 'повестк',\n  'санкци', 'выбор', 'голосован', 'партия', 'единая россия',\n  'оппозиц', 'протест', 'митинг', 'задержан', 'арест',\n  'приговор', 'суд над', 'уголовн', 'следствие', 'обыск',\n  'террор', 'взрыв', 'теракт', 'беженц', 'миграц',\n  'донбасс', 'крым', 'херсон', 'запорож', 'луганск', 'донецк',\n  'переговор', 'перемири', 'капитуляц', 'конфликт',\n];\n\nfunction isPolitical(title) {\n  const low = title.toLowerCase();\n  return politicalWords.some(pw => low.includes(pw));\n}\n\n// Извлечение заголовков только из <item> блоков\nfunction extractItemTitles(xml, maxCount) {\n  const titles = [];\n  const itemRegex = /<item[\\s>]([\\s\\S]*?)<\\/item>/gi;\n  let itemMatch;\n\n  while ((itemMatch = itemRegex.exec(xml)) !== null && titles.length < maxCount) {\n    const itemContent = itemMatch[1];\n    const titleMatch = itemContent.match(/<title><!\\[CDATA\\[(.*?)\\]\\]>|<title>(.*?)<\\/title>/);\n    if (titleMatch) {\n      const title = (titleMatch[1] || titleMatch[2] || '').trim();\n      if (title && !isServiceTitle(title) && !isPolitical(title)) {\n        titles.push(title);\n      }\n    }\n  }\n\n  if (titles.length === 0) {\n    const entryRegex = /<entry[\\s>]([\\s\\S]*?)<\\/entry>/gi;\n    let entryMatch;\n    while ((entryMatch = entryRegex.exec(xml)) !== null && titles.length < maxCount) {\n      const entryContent = entryMatch[1];\n      const titleMatch = entryContent.match(/<title[^>]*><!\\[CDATA\\[(.*?)\\]\\]>|<title[^>]*>(.*?)<\\/title>/);\n      if (titleMatch) {\n        const title = (titleMatch[1] || titleMatch[2] || '').trim();\n        if (title && !isServiceTitle(title) && !isPolitical(title)) {\n          titles.push(title);\n        }\n      }\n    }\n  }\n\n  return titles;\n}\n\n// Добавление заголовков с дедупликацией\nfunction addTitles(titles) {\n  for (const title of titles) {\n    const norm = normalize(title);\n    let isDuplicate = false;\n    for (const seen of seenNormalized) {\n      if (isSimilar(norm, seen)) {\n        isDuplicate = true;\n        break;\n      }\n    }\n    if (!isDuplicate) {\n      seenNormalized.add(norm);\n      allTitles.push(title);\n    }\n  }\n}\n\n// Загрузка фидов с User-Agent и таймаутом\nasync function fetchFeed(feedUrl, maxTitles) {\n  try {\n    const response = await this.helpers.httpRequest({\n      method: 'GET',\n      url: feedUrl,\n      headers: {\n        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',\n        'Accept': 'application/rss+xml, application/xml, text/xml, */*',\n      },\n      returnFullResponse: false,\n      timeout: 15000,\n    });\n    return extractItemTitles(response, maxTitles);\n  } catch (e) {\n    console.log('Feed error: ' + feedUrl + ' - ' + e.message);\n    return [];\n  }\n}\n\n// Загружаем международные ленты (по 5 заголовков)\nfor (const feedUrl of internationalFeeds) {\n  const titles = await fetchFeed.call(this, feedUrl, 5);\n  addTitles(titles);\n}\n\n// Загружаем российские ленты (по 7 заголовков)\nfor (const feedUrl of russiaFeeds) {\n  const titles = await fetchFeed.call(this, feedUrl, 7);\n  addTitles(titles);\n}\n\nconst newsList = allTitles.map((t, i) => `${i + 1}. ${t}`).join(' | ');\n\n// ========== ИМЯ ВЕДУЩЕЙ — менять только здесь ==========\nconst HOST_NAME = 'Мария Новикова';\nconst SIGNOFF_TEXT = 'С вами была ' + HOST_NAME + ', Держитесь верного курса.';\n\nconst prompt = 'Ты профессиональная радиоведущая по имени ' + HOST_NAME + ' — харизматичная, остроумная, с фирменным сухим юмором. Составь выпуск деловых радионовостей из следующих новостей. Переведи на русский язык и перепиши в стиле делового радиорепортажа. ВАЖНО: это ФИНАНСОВЫЙ выпуск. Говори ТОЛЬКО о рынках, акциях, валютах, сырье, экономических показателях, компаниях, сделках. НЕ упоминай политику, военные действия, санкции, политиков, геополитику. НИКОГДА не повторяй одну и ту же тему дважды. Если несколько новостей об одном — объедини в один комментарий. ВАЖНО: никогда не используй приветствия привязанные к времени суток. Используй только нейтральные: Приветствую вас, С вами ' + HOST_NAME + ', Рада быть с вами. Структура строго по блокам: 1) Мировая экономика, 2) Мировые рынки, 3) Фондовый рынок США, 4) Крипторынок, 5) Фондовый рынок РФ. Блок РФ самый подробный. Если по блоку нет новостей — пропусти. СТИЛЬ РАДИО-ВЕДУЩЕЙ ДЛЯ TTS: пиши короткими энергичными предложениями по 8-15 слов. Длинное предложение разбивай точкой на два. Используй тире между смысловыми частями для создания драматической паузы. Перед ключевыми цифрами и названиями компаний ставь запятую. Между блоками новостей используй фразы-переходы вроде: А теперь, Переходим к, Что касается, Тем временем. Задавай риторические вопросы — они оживляют речь. Все числа пиши словами: не 15% а пятнадцать процентов, не $100 а сто долларов. Тикеры раскрывай: не AAPL а Apple, не GAZP а Газпром. Добавляй уместные ироничные замечания. СТРОГО ВАЖНО: объём от 2500 до 3000 символов, не превышай 3500. Только текст сплошным потоком без абзацев. Не используй звёздочки, кавычки, скобки, нумерацию, маркеры списков, спецсимволы. Разрешены только: буквы, цифры, запятые, точки, тире, вопросительные и восклицательные знаки. Начинай сразу с приветствия. Твоё имя ' + HOST_NAME + ' и никак иначе. В конце скажи: ' + SIGNOFF_TEXT + ' Новости: ' + newsList;\n\nconst response = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.deepseek.com/chat/completions',\n  headers: {\n    'Authorization': 'Bearer YOUR_API_KEY',\n    'Content-Type': 'application/json'\n  },\n  body: {\n    model: 'deepseek-chat',\n    messages: [\n      { role: 'system', content: 'Ты генератор текста для голосового синтеза OpenAI TTS. Тебя зовут ' + HOST_NAME + '. Никогда не называй себя другим именем. Отвечай ТОЛЬКО текстом радиовыпуска. Без вводных фраз, без пояснений, без мета-комментариев, без markdown. Первое слово ответа должно быть приветствием. Каждая новость уникальна — никаких повторов. ПРАВИЛА СТИЛЯ ДЛЯ TTS: пиши короткими предложениями по 8-15 слов. Используй запятые для коротких пауз и точки для длинных. Перед важными цифрами и названиями ставь запятую — это создаёт акцент. Между блоками новостей делай переход через фразу-мостик. Все числа пиши словами: не 15% а пятнадцать процентов, не $100 а сто долларов, не 3.5 а три с половиной. Аббревиатуры раскрывай при первом упоминании. Ставь тире между смысловыми частями для драматической паузы. Риторические вопросы создают интонацию — используй их. Восклицания для акцента, но не больше двух на весь выпуск.' },\n      { role: 'user', content: prompt }\n    ],\n    max_tokens: 1800\n  },\n  json: true\n});\n\n// =============== ОЧИСТКА ТЕКСТА ===============\n\nlet text = response.choices[0].message.content;\n\n// DEBUG: логируем начало сырого текста (первые 100 символов + их коды)\nconst rawStart = text.substring(0, 100);\nconst rawCodes = [...rawStart].map(c => c.charCodeAt(0)).join(',');\nconsole.log('RAW TEXT START: ' + rawStart);\nconsole.log('RAW CHAR CODES: ' + rawCodes);\n\n// 1. Удаляем невидимые Unicode-символы\ntext = text.replace(/[\\uFEFF\\u200B\\u200C\\u200D\\u200E\\u200F\\u2028\\u2029\\u202A-\\u202E\\u2060\\u2066-\\u2069\\uFFF9-\\uFFFC]/g, '');\ntext = text.replace(/[\\x00-\\x09\\x0B\\x0C\\x0E-\\x1F\\x7F-\\x9F]/g, '');\n\n// 2. Удаляем markdown и визуальные спецсимволы (НО сохраняем TTS-пунктуацию: . , ! ? -)\ntext = text.replace(/\\\\n/g, ' ');\ntext = text.replace(/\\n/g, ' ');\ntext = text.replace(/\\r/g, ' ');\ntext = text.replace(/\\t/g, ' ');\n// Убираем только визуальный мусор, сохраняем . , ! ? - для TTS\ntext = text.replace(/[*#\\[\\](){}«»\"\"„\"''`~^|\\\\/<>@&=+$€£¥§©®™•°±×÷―…]/g, '');\n\n// 3. Нормализуем тире: em-dash и en-dash → обычное тире с пробелами (TTS читает как паузу)\ntext = text.replace(/[—–]/g, ' - ');\n\n// 4. Удаляем эмодзи\ntext = text.replace(/[\\u{1F000}-\\u{1FFFF}]/gu, '');\ntext = text.replace(/[\\u{2600}-\\u{27BF}]/gu, '');\n\n// 5. Нормализуем пробелы\ntext = text.replace(/\\s+/g, ' ');\ntext = text.trim();\n\n// 5. Принудительно заменяем \"Джой\" на имя ведущей (страховка от LLM)\ntext = text.replace(/Джой/g, HOST_NAME);\n\n// 6. Удаляем преамбулу — ищем первое приветствие\nconst greetings = [\n  'Приветствую', 'С вами ' + HOST_NAME, 'Рада быть',\n  'Здравствуйте', 'Привет', 'На связи ' + HOST_NAME,\n  'Это ' + HOST_NAME, 'Снова с вами', 'Добро пожаловать',\n  'Рада приветствовать', 'И снова', 'Вы слушаете', 'В эфире',\n  'С вами Мария', 'На связи Мария',\n];\nfor (const g of greetings) {\n  const idx = text.indexOf(g);\n  if (idx >= 0 && idx < 300) {\n    text = text.substring(idx);\n    break;\n  }\n}\n\n// 7. АБСОЛЮТНАЯ ГАРАНТИЯ: убираем ВСЁ что стоит до первой кириллической буквы\n// Это ловит любой мусор: невидимые символы, латиницу, цифры, пунктуацию\ntext = text.replace(/^[^А-ЯЁа-яё]+/, '');\n\n// 8. Если текст начинается со строчной — ищём первую заглавную (начало предложения)\nif (text.length > 0 && text[0].match(/[а-яё]/)) {\n  const upperMatch = text.match(/[А-ЯЁ]/);\n  if (upperMatch) {\n    const idx = text.indexOf(upperMatch[0]);\n    if (idx > 0 && idx < 200) {\n      text = text.substring(idx);\n    }\n  }\n}\n\n// DEBUG: логируем начало очищенного текста\nconsole.log('CLEAN TEXT START: ' + text.substring(0, 100));\nconsole.log('CLEAN FIRST CHAR CODE: ' + text.charCodeAt(0));\nconsole.log('CLEAN TEXT LENGTH: ' + text.length);\n\n// =============== TTS POST-PROCESSING (радио-голос) ===============\n\n// 1. Раскрываем оставшиеся числа в словесную форму (DeepSeek может пропустить)\nconst numberWords = {\n  '0': 'ноль', '1': 'один', '2': 'два', '3': 'три', '4': 'четыре',\n  '5': 'пять', '6': 'шесть', '7': 'семь', '8': 'восемь', '9': 'девять',\n  '10': 'десять', '11': 'одиннадцать', '12': 'двенадцать',\n  '13': 'тринадцать', '14': 'четырнадцать', '15': 'пятнадцать',\n  '16': 'шестнадцать', '17': 'семнадцать', '18': 'восемнадцать',\n  '19': 'девятнадцать', '20': 'двадцать', '30': 'тридцать',\n  '40': 'сорок', '50': 'пятьдесят', '60': 'шестьдесят',\n  '70': 'семьдесят', '80': 'восемьдесят', '90': 'девяносто',\n  '100': 'сто', '200': 'двести', '300': 'триста',\n  '500': 'пятьсот', '1000': 'тысяча',\n};\n\n// Раскрываем символы валют и процентов\ntext = text.replace(/\\$/g, ' долларов ');\ntext = text.replace(/€/g, ' евро ');\ntext = text.replace(/£/g, ' фунтов ');\ntext = text.replace(/¥/g, ' йен ');\ntext = text.replace(/₽/g, ' рублей ');\ntext = text.replace(/%/g, ' процентов');\n\n// Раскрываем простые числа (1-20) когда они стоят отдельно\ntext = text.replace(/\\b(\\d{1,4})\\b/g, (match) => {\n  return numberWords[match] || match;\n});\n\n// 2. Раскрываем популярные финансовые аббревиатуры\ntext = text.replace(/\\bЦБ РФ\\b/g, 'Центробанк');\ntext = text.replace(/\\bЦБ\\b/g, 'Центробанк');\ntext = text.replace(/\\bФРС\\b/g, 'Федрезерв');\ntext = text.replace(/\\bЕЦБ\\b/g, 'Европейский центробанк');\ntext = text.replace(/\\bМВФ\\b/g, 'Международный валютный фонд');\ntext = text.replace(/\\bВВП\\b/g, 'В В П');\ntext = text.replace(/\\bIPO\\b/gi, 'ай пи о');\ntext = text.replace(/\\bETF\\b/gi, 'и ти эф');\ntext = text.replace(/\\bP\\/E\\b/gi, 'пи и');\ntext = text.replace(/\\bS&P\\b/gi, 'эс энд пи');\ntext = text.replace(/\\bNASDAQ\\b/gi, 'Насдак');\ntext = text.replace(/\\bDow Jones\\b/gi, 'Доу Джонс');\ntext = text.replace(/\\bBTC\\b/g, 'биткоин');\ntext = text.replace(/\\bETH\\b/g, 'эфириум');\ntext = text.replace(/\\bМОЕКС\\b/gi, 'Мосбиржа');\ntext = text.replace(/\\bMOEX\\b/gi, 'Мосбиржа');\ntext = text.replace(/\\bРТС\\b/g, 'эр тэ эс');\n\n// 3. Фиксим пунктуацию для ритма\n// Двойные точки/запятые\ntext = text.replace(/\\.{2,}/g, '.');\ntext = text.replace(/,{2,}/g, ',');\n// Пробел перед знаками пунктуации убираем\ntext = text.replace(/\\s+([.,!?])/g, '$1');\n// Пробел после знаков пунктуации добавляем\ntext = text.replace(/([.,!?])([А-ЯЁа-яё])/g, '$1 $2');\n// Тире с пробелами для паузы\ntext = text.replace(/\\s*-\\s*/g, ' - ');\n// Убираем тире в начале предложений (если осталось)\ntext = text.replace(/^\\s*-\\s*/, '');\n\n// 4. Финальная нормализация пробелов\ntext = text.replace(/\\s+/g, ' ');\ntext = text.trim();\n\n// =============== ОБРЕЗКА ПОД ЛИМИТ TTS ===============\n\nconst TTS_LIMIT = 4090;\nconst SIGNOFF = ' ' + SIGNOFF_TEXT;\nconst SIGNOFF_MARKER = 'С вами была ' + HOST_NAME;\n\nif (text.length > TTS_LIMIT) {\n  const hasSignoff = text.indexOf(SIGNOFF_MARKER) !== -1 && text.indexOf(SIGNOFF_MARKER) < TTS_LIMIT;\n  \n  if (hasSignoff) {\n    const signoffEnd = text.indexOf('верного курса.') + 'верного курса.'.length;\n    if (signoffEnd > 0 && signoffEnd <= TTS_LIMIT) {\n      text = text.substring(0, signoffEnd);\n    } else {\n      text = text.substring(0, TTS_LIMIT);\n    }\n  } else {\n    const cutLimit = TTS_LIMIT - SIGNOFF.length;\n    const trimmed = text.substring(0, cutLimit);\n    const lastDot = trimmed.lastIndexOf('.');\n    if (lastDot > cutLimit * 0.7) {\n      text = trimmed.substring(0, lastDot + 1) + SIGNOFF;\n    } else {\n      text = trimmed + SIGNOFF;\n    }\n  }\n}\n\n// Гарантия: если концовка отсутствует и текст помещается — дописываем\nif (!text.includes(SIGNOFF_MARKER) && (text.length + SIGNOFF.length) <= 4096) {\n  text = text.replace(/\\s*$/, '') + SIGNOFF;\n}\n\nresponse.choices[0].message.content = text;\n\nreturn [{\n  json: response\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -144,
+        -496
+      ],
+      "id": "b86dfacc-6728-4b72-9b9f-b8f82161f5be",
+      "name": "tts"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 9-21 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -336,
+        -496
+      ],
+      "id": "9333ac3f-caa8-4141-aa5f-e7777d5a2ae3",
+      "name": "Schedule Trigger1"
+    }
+  ],
+  "connections": {
+    "server": {
+      "main": [
+        [
+          {
+            "node": "rename",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord": {
+      "main": [
+        []
+      ]
+    },
+    "rename": {
+      "main": [
+        [
+          {
+            "node": "Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "tts": {
+      "main": [
+        [
+          {
+            "node": "server",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger1": {
+      "main": [
+        [
+          {
+            "node": "tts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "timezone": "Europe/Moscow",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionCounter": 295,
+  "versionMetadata": {
+    "name": null,
+    "description": null
+  }
+}
